@@ -3,177 +3,279 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { Calendar, Plus, Filter, CheckCircle, XCircle, Clock } from 'lucide-react';
-import clsx from 'clsx';
+import { Plus, CheckCircle, XCircle, Clock, Search, Upload, Calendar } from 'lucide-react';
+import { clsx } from 'clsx';
 
 export const Leaves = () => {
     const { user } = useAuth();
+    const isAdmin = user?.role === 'admin';
+
+    // State
     const [leaves, setLeaves] = useState([]);
-    const [showForm, setShowForm] = useState(false);
+    const [showModal, setShowModal] = useState(false);
+    const [filterStatus, setFilterStatus] = useState('All');
 
     // Form State
-    const [leaveType, setLeaveType] = useState('Sick Leave');
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
-    const [reason, setReason] = useState('');
+    const [newLeave, setNewLeave] = useState({
+        type: 'Paid Time Off',
+        startDate: '',
+        endDate: '',
+        reason: '',
+    });
 
+    // Load Data
     useEffect(() => {
         loadLeaves();
-    }, [user]);
+    }, [user, showModal]); // Reload when modal closes (submission) or user changes
 
     const loadLeaves = () => {
         const allLeaves = db.getLeaves();
-        // Filter for current user unless admin
-        const myLeaves = allLeaves.filter(l => l.userId === user.id).sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
-        setLeaves(myLeaves);
+        if (isAdmin) {
+            setLeaves(allLeaves.sort((a, b) => new Date(b.appliedOn) - new Date(a.appliedOn)));
+        } else {
+            setLeaves(allLeaves.filter(l => l.userId === user.id).sort((a, b) => new Date(b.appliedOn) - new Date(a.appliedOn)));
+        }
+    };
+
+    // Actions
+    const handleStatusUpdate = (leaveId, newStatus) => {
+        const leaveToUpdate = leaves.find(l => l.id === leaveId);
+        if (leaveToUpdate) {
+            db.updateLeave({ ...leaveToUpdate, status: newStatus });
+            loadLeaves();
+        }
     };
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!startDate || !endDate) return;
 
-        const newLeave = {
+        // Simple duration calc
+        const start = new Date(newLeave.startDate);
+        const end = new Date(newLeave.endDate);
+        const diffTime = Math.abs(end - start);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+        const submission = {
             id: Date.now().toString(),
             userId: user.id,
-            userName: user.name,
-            type: leaveType,
-            startDate,
-            endDate,
-            reason,
+            userName: user.name, // Denormalize name for easier admin view
+            type: newLeave.type,
+            startDate: newLeave.startDate,
+            endDate: newLeave.endDate,
+            days: diffDays,
+            reason: newLeave.reason,
             status: 'Pending',
-            appliedOn: new Date().toISOString().split('T')[0],
+            appliedOn: new Date().toISOString(),
         };
 
-        db.addLeave(newLeave);
-        setShowForm(false);
-        resetForm();
-        loadLeaves();
+        db.addLeave(submission);
+        setShowModal(false);
+        setNewLeave({ type: 'Paid Time Off', startDate: '', endDate: '', reason: '' });
     };
 
-    const resetForm = () => {
-        setStartDate('');
-        setEndDate('');
-        setReason('');
-        setLeaveType('Sick Leave');
-    };
+    // Stats Calculation (Mock for demo)
+    const paidLeavesUsed = leaves.filter(l => l.userId === user.id && l.type === 'Paid Time Off' && l.status === 'Approved')
+        .reduce((acc, curr) => acc + (curr.days || 1), 0);
+    const sickLeavesUsed = leaves.filter(l => l.userId === user.id && l.type === 'Sick Leave' && l.status === 'Approved')
+        .reduce((acc, curr) => acc + (curr.days || 1), 0);
+
+    const paidQuota = 24 - paidLeavesUsed;
+    const sickQuota = 7 - sickLeavesUsed;
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Leave Management</h1>
-                    <p className="text-slate-500">View and apply for time off.</p>
+            {/* Header / Tabs */}
+            <div className="border-b border-slate-200">
+                <div className="flex gap-8">
+                    <button className="px-4 py-2 border-b-2 border-indigo-600 text-indigo-700 font-medium text-sm">Time Off</button>
+                    {!isAdmin && <button className="px-4 py-2 hover:bg-slate-50 text-slate-500 font-medium text-sm">Allocation</button>}
                 </div>
-                <Button onClick={() => setShowForm(!showForm)}>
-                    <Plus className="w-5 h-5 mr-2" />
-                    Apply for Leave
-                </Button>
             </div>
 
-            {/* Application Form */}
-            {showForm && (
-                <div className="bg-white p-6 rounded-xl shadow-lg border border-indigo-100 animate-in fade-in slide-in-from-top-4">
-                    <h2 className="text-lg font-semibold mb-4">New Leave Application</h2>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-sm font-medium text-slate-700">Leave Type</label>
-                                <select
-                                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                                    value={leaveType}
-                                    onChange={(e) => setLeaveType(e.target.value)}
-                                >
-                                    <option>Sick Leave</option>
-                                    <option>Casual Leave</option>
-                                    <option>Paid Leave</option>
-                                    <option>Unpaid Leave</option>
-                                </select>
-                            </div>
-                            <Input
-                                label="Reason"
-                                placeholder="Reason for leave..."
-                                value={reason}
-                                onChange={(e) => setReason(e.target.value)}
-                            />
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <Input
-                                label="Start Date"
-                                type="date"
-                                value={startDate}
-                                onChange={(e) => setStartDate(e.target.value)}
-                                required
-                            />
-                            <Input
-                                label="End Date"
-                                type="date"
-                                value={endDate}
-                                onChange={(e) => setEndDate(e.target.value)}
-                                required
-                            />
-                        </div>
-                        <div className="flex justify-end gap-3 pt-2">
-                            <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
-                            <Button type="submit">Submit Request</Button>
-                        </div>
-                    </form>
+            {/* Controls Row */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-2 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-4 w-full md:w-auto">
+                    {!isAdmin && (
+                        <Button onClick={() => setShowModal(true)}>
+                            New Request
+                        </Button>
+                    )}
+                    {isAdmin && <span className="text-sm font-semibold text-slate-700 px-2">Manage Requests</span>}
+                </div>
+
+                {/* Search / Filter */}
+                <div className="relative w-full md:w-64">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <input
+                        type="text"
+                        placeholder="Search..."
+                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                </div>
+            </div>
+
+            {/* Quota Stats (Employee Only) */}
+            {!isAdmin && (
+                <div className="grid grid-cols-2 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="bg-white p-4">
+                        <p className="text-sm font-medium text-indigo-600 mb-1">Paid Time Off</p>
+                        <p className="text-2xl font-bold text-slate-900">{paidQuota} <span className="text-sm font-normal text-slate-500">Days Available</span></p>
+                    </div>
+                    <div className="bg-white p-4">
+                        <p className="text-sm font-medium text-blue-600 mb-1">Sick Time Off</p>
+                        <p className="text-2xl font-bold text-slate-900">{sickQuota} <span className="text-sm font-normal text-slate-500">Days Available</span></p>
+                    </div>
                 </div>
             )}
 
-            {/* Leaves List */}
+            {/* Table */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100">
-                    <h2 className="text-lg font-semibold text-slate-900">My Leave History</h2>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-slate-500">
-                            <tr>
-                                <th className="px-6 py-3 font-medium">Type</th>
-                                <th className="px-6 py-3 font-medium">Dates</th>
-                                <th className="px-6 py-3 font-medium">Days</th>
-                                <th className="px-6 py-3 font-medium">Status</th>
-                                <th className="px-6 py-3 font-medium">Reason</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {leaves.length > 0 ? (
-                                leaves.map((leave) => (
-                                    <tr key={leave.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4 font-medium text-slate-900">{leave.type}</td>
-                                        <td className="px-6 py-4 text-slate-600">
-                                            {new Date(leave.startDate).toLocaleDateString()} - {new Date(leave.endDate).toLocaleDateString()}
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-600">
-                                            {Math.ceil((new Date(leave.endDate) - new Date(leave.startDate)) / (1000 * 60 * 60 * 24)) + 1}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <span className={clsx(
-                                                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
-                                                leave.status === 'Approved' ? "bg-green-50 text-green-700 border-green-100" :
-                                                    leave.status === 'Rejected' ? "bg-red-50 text-red-700 border-red-100" :
-                                                        "bg-amber-50 text-amber-700 border-amber-100"
-                                            )}>
-                                                {leave.status === 'Approved' && <CheckCircle className="w-3 h-3" />}
-                                                {leave.status === 'Rejected' && <XCircle className="w-3 h-3" />}
-                                                {leave.status === 'Pending' && <Clock className="w-3 h-3" />}
-                                                {leave.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-500 max-w-xs truncate">{leave.reason || '-'}</td>
-                                    </tr>
-                                ))
-                            ) : (
-                                <tr>
-                                    <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
-                                        No leave requests found.
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                        <tr>
+                            <th className="px-6 py-3">Employee</th>
+                            <th className="px-6 py-3">Start Date</th>
+                            <th className="px-6 py-3">End Date</th>
+                            <th className="px-6 py-3">Type</th>
+                            <th className="px-6 py-3">Days</th>
+                            <th className="px-6 py-3">Status</th>
+                            {isAdmin && <th className="px-6 py-3 text-right">Actions</th>}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {leaves.map((leave) => (
+                            <tr key={leave.id} className="hover:bg-slate-50 group">
+                                <td className="px-6 py-4 font-medium text-slate-900">{leave.userName}</td>
+                                <td className="px-6 py-4 text-slate-600">{leave.startDate}</td>
+                                <td className="px-6 py-4 text-slate-600">{leave.endDate}</td>
+                                <td className="px-6 py-4">
+                                    <span className={clsx(
+                                        "truncate",
+                                        leave.type.includes('Paid') ? "text-indigo-600" :
+                                            leave.type.includes('Sick') ? "text-blue-600" : "text-slate-600"
+                                    )}>{leave.type}</span>
+                                </td>
+                                <td className="px-6 py-4 text-slate-600 font-mono">{leave.days}</td>
+                                <td className="px-6 py-4">
+                                    <StatusBadge status={leave.status} />
+                                </td>
+                                {isAdmin && (
+                                    <td className="px-6 py-4 text-right">
+                                        {leave.status === 'Pending' && (
+                                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => handleStatusUpdate(leave.id, 'Approved')}
+                                                    className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200" title="Approve">
+                                                    <CheckCircle className="w-5 h-5" />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleStatusUpdate(leave.id, 'Rejected')}
+                                                    className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200" title="Reject">
+                                                    <XCircle className="w-5 h-5" />
+                                                </button>
+                                            </div>
+                                        )}
                                     </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                )}
+                            </tr>
+                        ))}
+                        {leaves.length === 0 && (
+                            <tr><td colSpan={isAdmin ? 7 : 6} className="text-center py-8 text-slate-500">No requests found.</td></tr>
+                        )}
+                    </tbody>
+                </table>
             </div>
+
+            {/* MODAL */}
+            {showModal && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-lg font-bold">Time Off Request</h2>
+                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><XCircle className="w-6 h-6" /></button>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-slate-500 uppercase">Employee</label>
+                                    <div className="p-2 bg-slate-100 rounded text-slate-700 text-sm font-medium">{user.name}</div>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-slate-500 uppercase">Time Off Type</label>
+                                    <select
+                                        className="w-full p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-indigo-500"
+                                        value={newLeave.type}
+                                        onChange={e => setNewLeave({ ...newLeave, type: e.target.value })}
+                                    >
+                                        <option>Paid Time Off</option>
+                                        <option>Sick Leave</option>
+                                        <option>Unpaid Leave</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-500 uppercase">Validity Period</label>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <input
+                                        type="date"
+                                        className="w-full p-2 border border-slate-300 rounded text-sm"
+                                        value={newLeave.startDate}
+                                        onChange={e => setNewLeave({ ...newLeave, startDate: e.target.value })}
+                                        required
+                                    />
+                                    <input
+                                        type="date"
+                                        className="w-full p-2 border border-slate-300 rounded text-sm"
+                                        value={newLeave.endDate}
+                                        onChange={e => setNewLeave({ ...newLeave, endDate: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Auto-calc days display */}
+                            {newLeave.startDate && newLeave.endDate && (
+                                <div className="flex items-center justify-between bg-indigo-50 p-2 rounded border border-indigo-100">
+                                    <span className="text-xs font-semibold text-indigo-700 uppercase">Allocation Request</span>
+                                    <span className="text-sm font-bold text-indigo-900">
+                                        {Math.max(0, Math.ceil((new Date(newLeave.endDate) - new Date(newLeave.startDate)) / (1000 * 60 * 60 * 24)) + 1)} Days
+                                    </span>
+                                </div>
+                            )}
+
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-500 uppercase">Attachment (Optional)</label>
+                                <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 cursor-pointer">
+                                    <Upload className="w-5 h-5 mb-1" />
+                                    <span className="text-xs">Click to upload certificate</span>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-6">
+                                <Button type="button" variant="ghost" onClick={() => setShowModal(false)}>Discard</Button>
+                                <Button type="submit">Submit</Button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
+    );
+};
+
+const StatusBadge = ({ status }) => {
+    const isApproved = status === 'Approved';
+    const isRejected = status === 'Rejected';
+    return (
+        <span className={clsx(
+            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
+            isApproved ? "bg-green-100 text-green-700 border-green-200" :
+                isRejected ? "bg-red-100 text-red-700 border-red-200" :
+                    "bg-orange-100 text-orange-700 border-orange-200"
+        )}>
+            {status}
+        </span>
     );
 };

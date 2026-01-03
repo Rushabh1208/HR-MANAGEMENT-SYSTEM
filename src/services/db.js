@@ -1,85 +1,166 @@
-export const DB_KEYS = {
-    USERS: 'dayflow_users',
-    ATTENDANCE: 'dayflow_attendance',
-    LEAVES: 'dayflow_leaves',
-    CURRENT_USER: 'dayflow_current_user',
-};
-
-const INITIAL_ADMIN = {
-    id: 'admin_1',
-    name: 'Admin User',
-    email: 'admin@dayflow.com',
-    password: 'admin', // In a real app, this would be hashed
-    role: 'admin',
-    department: 'HR',
-    jobTitle: 'HR Manager',
-    salary: 50000,
-    joinedDate: '2025-01-01',
-};
+// DB Service: Replaced with API calls
+const API_URL = 'http://localhost:5000/api';
 
 export const db = {
-    getUsers: () => {
-        const users = localStorage.getItem(DB_KEYS.USERS);
-        return users ? JSON.parse(users) : [INITIAL_ADMIN];
-    },
+    // AUTH
+    authenticate: async (identifier, password) => {
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier, password }),
+            });
 
-    checkInitialized: () => {
-        if (!localStorage.getItem(DB_KEYS.USERS)) {
-            localStorage.setItem(DB_KEYS.USERS, JSON.stringify([INITIAL_ADMIN]));
+            const data = await res.json();
+
+            if (!res.ok) {
+                console.warn('Login failed:', data.message);
+                return null;
+            }
+            return data.user;
+        } catch (error) {
+            console.error('Login network/server error:', error);
+            return null;
         }
     },
 
-    addUser: (user) => {
-        const users = db.getUsers();
-        users.push(user);
-        localStorage.setItem(DB_KEYS.USERS, JSON.stringify(users));
+    createUser: async (userData, companyName) => {
+        try {
+            const res = await fetch(`${API_URL}/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...userData, companyName }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(data.message || 'Registration failed');
+            }
+            return data;
+        } catch (error) {
+            console.error('Registration error:', error);
+            throw error;
+        }
     },
 
-    updateUser: (updatedUser) => {
-        const users = db.getUsers().map(u => u.id === updatedUser.id ? updatedUser : u);
-        localStorage.setItem(DB_KEYS.USERS, JSON.stringify(users));
+    // USERS
+    getUsers: async () => {
+        const userStr = localStorage.getItem('dayflow_user');
+        const user = userStr ? JSON.parse(userStr) : null;
+        const companyName = user ? user.companyName : '';
+
+        try {
+            const res = await fetch(`${API_URL}/employees?companyName=${encodeURIComponent(companyName)}`);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch (error) {
+            console.error(error);
+            return [];
+        }
     },
 
-    authenticate: (email, password) => {
-        db.checkInitialized();
-        const users = db.getUsers();
-        return users.find(u => u.email === email && u.password === password);
+    updateUser: async (user) => {
+        try {
+            const res = await fetch(`${API_URL}/employees/${user.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(user),
+            });
+            return await res.json();
+        } catch (error) {
+            console.error(error);
+        }
     },
 
-    // Attendance
-    getAttendance: () => {
-        const data = localStorage.getItem(DB_KEYS.ATTENDANCE);
-        return data ? JSON.parse(data) : [];
+    // ATTENDANCE
+    getAttendance: async () => {
+        const userStr = localStorage.getItem('dayflow_user');
+        const user = userStr ? JSON.parse(userStr) : null;
+        const companyName = user ? user.companyName : '';
+
+        try {
+            const res = await fetch(`${API_URL}/attendance?companyName=${encodeURIComponent(companyName)}`);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch (error) {
+            console.error(error);
+            return [];
+        }
     },
 
-    addAttendance: (record) => {
-        const data = db.getAttendance();
-        data.push(record);
-        localStorage.setItem(DB_KEYS.ATTENDANCE, JSON.stringify(data));
+    addAttendance: async (record) => {
+        try {
+            const res = await fetch(`${API_URL}/attendance/checkin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: record.userId,
+                    date: record.date,
+                    time: record.checkIn,
+                    status: record.status
+                }),
+            });
+            return res.ok;
+        } catch (error) {
+            console.error(error);
+        }
     },
 
-    updateAttendance: (updatedRecord) => {
-        const data = db.getAttendance().map(r => r.id === updatedRecord.id ? updatedRecord : r);
-        localStorage.setItem(DB_KEYS.ATTENDANCE, JSON.stringify(data));
+    updateAttendance: async (record) => {
+        try {
+            const res = await fetch(`${API_URL}/attendance/checkout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: record.userId,
+                    date: record.date,
+                    time: record.checkOut,
+                    workingHours: record.workingHours
+                }),
+            });
+            return res.ok;
+        } catch (error) {
+            console.error(error);
+        }
     },
 
-    // Leaves
-    getLeaves: () => {
-        const data = localStorage.getItem(DB_KEYS.LEAVES);
-        return data ? JSON.parse(data) : [];
+    // PAYROLL
+    getPayroll: async (userId) => {
+        const userStr = localStorage.getItem('dayflow_user');
+        const user = userStr ? JSON.parse(userStr) : null;
+        const companyName = user ? user.companyName : '';
+
+        try {
+            let url = `${API_URL}/payroll?companyName=${encodeURIComponent(companyName)}`;
+            if (userId) url += `&userId=${userId}`;
+
+            const res = await fetch(url);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch (error) {
+            console.error(error);
+            return [];
+        }
     },
 
-    addLeave: (leave) => {
-        const data = db.getLeaves();
-        data.push(leave);
-        localStorage.setItem(DB_KEYS.LEAVES, JSON.stringify(data));
-    },
-
-    updateLeave: (updatedLeave) => {
-        const data = db.getLeaves().map(l => l.id === updatedLeave.id ? updatedLeave : l);
-        localStorage.setItem(DB_KEYS.LEAVES, JSON.stringify(data));
+    generatePayslip: async (data) => {
+        try {
+            const res = await fetch(`${API_URL}/payroll/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
+            return res.ok;
+        } catch (error) {
+            console.error(error);
+        }
     }
 };
 
-// Initialize on load
-db.checkInitialized();
+export const DB_KEYS = {
+    USERS: 'dayflow_users',
+    CURRENT_USER: 'dayflow_user',
+    ATTENDANCE: 'dayflow_attendance',
+    LEAVES: 'dayflow_leaves'
+};

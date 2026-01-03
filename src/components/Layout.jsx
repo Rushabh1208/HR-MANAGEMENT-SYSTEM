@@ -1,13 +1,13 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
+import { Header } from './Header';
 
 export const Layout = () => {
     return (
-        <div className="min-h-screen bg-slate-50">
-            <Sidebar />
-            <main className="pl-64 min-h-screen">
-                <div className="p-8 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-white">
+            <Header />
+            <main className="pt-14 px-4 pb-8 max-w-7xl mx-auto">
+                <div className="py-6">
                     <Outlet />
                 </div>
             </main>

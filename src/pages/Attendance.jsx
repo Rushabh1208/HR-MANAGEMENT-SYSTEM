@@ -1,161 +1,263 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
-import { Button } from '../components/Button';
-import { Clock, Calendar as CalendarIcon, MapPin, CheckCircle, XCircle } from 'lucide-react';
-import clsx from 'clsx';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { clsx } from 'clsx';
 
 export const Attendance = () => {
     const { user } = useAuth();
-    const [attendanceHistory, setAttendanceHistory] = useState([]);
-    const [todayRecord, setTodayRecord] = useState(null);
+    const isAdmin = user?.role === 'admin';
+
+    // Shared State
+    const [attendanceData, setAttendanceData] = useState([]);
+    const [viewMode, setViewMode] = useState('daily'); // 'daily' | 'weekly'
+    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadAttendance();
-    }, [user]);
+    }, [user, selectedDate, viewMode]);
 
-    const loadAttendance = () => {
-        const allRecords = db.getAttendance();
-        // Filter for current user unless admin (Admins might see all, but for this view let's keep it personal or all based on role later. 
-        // For now, let's show personal attendance for simplicity in this view, 
-        // or add a toggle if admin. The requirement says "Employees can view only their own... Admin can view all".
-        // Let's implement Personal View first.
-
-        const personalRecords = allRecords.filter(r => r.userId === user.id).sort((a, b) => new Date(b.date) - new Date(a.date));
-        setAttendanceHistory(personalRecords);
-
-        const todayStr = new Date().toISOString().split('T')[0];
-        const today = personalRecords.find(r => r.date === todayStr);
-        setTodayRecord(today);
+    const loadAttendance = async () => {
+        setLoading(true);
+        // db.getAttendance now returns ALL attendance for the company (filtered on backend by companyName)
+        // Ideally we should filter by date on BACKEND to optimize
+        // For now, fetching all and filtering on frontend for transition speed as per db.js implementation
+        const allData = await db.getAttendance(); // Returns [] if error
+        setAttendanceData(allData);
         setLoading(false);
     };
 
-    const handleCheckIn = () => {
-        const now = new Date();
-        const todayStr = now.toISOString().split('T')[0];
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-        const newRecord = {
-            id: Date.now().toString(),
-            userId: user.id,
-            userName: user.name,
-            date: todayStr,
-            checkIn: timeStr,
-            checkOut: null,
-            status: 'Present',
-        };
-
-        db.addAttendance(newRecord);
-        loadAttendance();
+    const handleDateChange = (days) => {
+        const date = new Date(selectedDate);
+        date.setDate(date.getDate() + days);
+        setSelectedDate(date.toISOString().split('T')[0]);
     };
 
-    const handleCheckOut = () => {
-        if (!todayRecord) return;
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // --- Sub-Components ---
 
-        const updatedRecord = {
-            ...todayRecord,
-            checkOut: timeStr,
+    // ADMIN VIEW: See everyone
+    const AdminView = () => {
+        const [employees, setEmployees] = useState([]);
+        const [loadingEmps, setLoadingEmps] = useState(true);
+
+        useEffect(() => {
+            const fetchEmps = async () => {
+                const users = await db.getUsers();
+                // Filter by company just in case logic moved
+                const myUsers = users.filter(u => u.companyName === user.companyName);
+                setEmployees(myUsers);
+                setLoadingEmps(false);
+            };
+            fetchEmps();
+        }, []);
+
+        // --- Weekly Logic ---
+        const getWeekDays = (baseDateStr) => {
+            const date = new Date(baseDateStr);
+            const day = date.getDay(); // 0 (Sun) to 6 (Sat)
+            const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Adjust to get Monday
+
+            const monday = new Date(date.setDate(diff));
+            const week = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(monday);
+                d.setDate(monday.getDate() + i);
+                week.push(d.toISOString().split('T')[0]);
+            }
+            return week;
         };
 
-        // calculate hours worked purely for display if needed, simplified for now
-        db.updateAttendance(updatedRecord); // We need to add updateAttendance to db service first if not strict
-        // Actually db service had addAttendance but maybe not update specific. Let's check db service capabilities. 
-        // The previous db.js had addAttendance but not explicit update for attendance relative to ID.
-        // I will implement a custom update in the db service or just overwrite for this mock.
-        // Let's assume I'll fix db.js to have updateAttendance or I'll implement it here via get/set.
+        const weekDays = getWeekDays(selectedDate);
 
-        // Quick fix for mock db update locally:
-        const all = db.getAttendance();
-        const newAll = all.map(r => r.id === todayRecord.id ? updatedRecord : r);
-        localStorage.setItem('dayflow_attendance', JSON.stringify(newAll));
+        // Merge employees with their attendance
+        const getDailyRecords = () => employees.map(emp => {
+            // Match with user_id (backend) or userId (frontend legacy)
+            const record = attendanceData.find(r => (r.user_id === emp.id || r.userId === emp.id) && r.date === selectedDate);
+            return {
+                ...emp,
+                checkIn: record?.check_in || record?.checkIn || '-',
+                checkOut: record?.check_out || record?.checkOut || '-',
+                workingHours: record?.working_hours || record?.workingHours || '-',
+                status: record?.status || 'Absent'
+            };
+        });
 
-        loadAttendance();
-    };
+        const dailyRecords = getDailyRecords();
 
-    return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Attendance</h1>
-                    <p className="text-slate-500">Manage your daily check-ins and check-outs.</p>
+        if (loading || loadingEmps) return <div className="p-8 text-center">Loading attendance...</div>;
+
+        return (
+            <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <h1 className="text-2xl font-bold text-slate-900">Attendance Overview</h1>
+
+                    <div className="flex items-center gap-4">
+                        {/* View Toggle */}
+                        <div className="bg-slate-100 p-1 rounded-lg flex text-sm font-medium">
+                            <button
+                                onClick={() => setViewMode('daily')}
+                                className={clsx("px-3 py-1.5 rounded-md transition-all", viewMode === 'daily' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                            >
+                                Daily
+                            </button>
+                            <button
+                                onClick={() => setViewMode('weekly')}
+                                className={clsx("px-3 py-1.5 rounded-md transition-all", viewMode === 'weekly' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                            >
+                                Weekly
+                            </button>
+                        </div>
+
+                        {/* Date Navigation */}
+                        <div className="flex items-center bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
+                            <button onClick={() => handleDateChange(viewMode === 'weekly' ? -7 : -1)} className="p-2 hover:bg-slate-100 rounded-md text-slate-600">
+                                <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <div className="px-4 py-1 flex items-center gap-2 font-medium text-slate-700 min-w-[160px] justify-center">
+                                <CalendarIcon className="w-4 h-4 text-slate-400" />
+                                {viewMode === 'daily'
+                                    ? new Date(selectedDate).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })
+                                    : `Week of ${new Date(weekDays[0]).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}`
+                                }
+                            </div>
+                            <button onClick={() => handleDateChange(viewMode === 'weekly' ? 7 : 1)} className="p-2 hover:bg-slate-100 rounded-md text-slate-600">
+                                <ChevronRight className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center gap-4">
-                    <div className="text-right">
-                        <p className="text-xs text-slate-500 uppercase font-semibold">Current Time</p>
-                        <p className="text-xl font-mono font-bold text-slate-900">
-                            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                    </div>
-
-                    {!todayRecord ? (
-                        <Button onClick={handleCheckIn} className="bg-green-600 hover:bg-green-700">
-                            <CheckCircle className="w-4 h-4 mr-2" />
-                            Check In
-                        </Button>
-                    ) : !todayRecord.checkOut ? (
-                        <Button onClick={handleCheckOut} className="bg-orange-600 hover:bg-orange-700">
-                            <XCircle className="w-4 h-4 mr-2" />
-                            Check Out
-                        </Button>
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    {viewMode === 'daily' ? (
+                        /* DAILY TABLE */
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                <tr>
+                                    <th className="px-6 py-4">Employee</th>
+                                    <th className="px-6 py-4">Check In</th>
+                                    <th className="px-6 py-4">Check Out</th>
+                                    <th className="px-6 py-4">Work Hours</th>
+                                    <th className="px-6 py-4">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {dailyRecords.map(record => (
+                                    <tr key={record.id} className="hover:bg-slate-50">
+                                        <td className="px-6 py-4">
+                                            <div className="font-medium text-slate-900">{record.name}</div>
+                                            <div className="text-xs text-slate-500">{record.jobTitle}</div>
+                                        </td>
+                                        <td className="px-6 py-4 font-mono text-slate-600">{record.checkIn}</td>
+                                        <td className="px-6 py-4 font-mono text-slate-600">{record.checkOut}</td>
+                                        <td className="px-6 py-4 font-mono text-slate-700">{record.workingHours}</td>
+                                        <td className="px-6 py-4">
+                                            <StatusBadge status={record.status} />
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     ) : (
-                        <div className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg font-medium text-sm flex items-center">
-                            <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
-                            Completed for Today
+                        /* WEEKLY TABLE */
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left border-collapse">
+                                <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                    <tr>
+                                        <th className="px-4 py-4 w-48 border-r border-slate-200 sticky left-0 bg-slate-50 z-10">Employee</th>
+                                        {weekDays.map(day => (
+                                            <th key={day} className="px-2 py-4 text-center min-w-[80px] border-r border-slate-100 last:border-0">
+                                                <div className="text-xs uppercase">{new Date(day).toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                                                <div className="text-slate-900 font-bold">{new Date(day).getDate()}</div>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {employees.map(emp => (
+                                        <tr key={emp.id} className="hover:bg-slate-50">
+                                            <td className="px-4 py-3 border-r border-slate-200 font-medium text-slate-900 sticky left-0 bg-white group-hover:bg-slate-50 z-10">
+                                                {emp.name}
+                                            </td>
+                                            {weekDays.map(day => {
+                                                const record = attendanceData.find(r => (r.user_id === emp.id || r.userId === emp.id) && r.date === day);
+                                                const status = record?.status || 'Absent';
+
+                                                return (
+                                                    <td key={day} className="px-2 py-3 text-center border-r border-slate-100 last:border-0">
+                                                        <div className="flex justify-center">
+                                                            <MiniStatusBadge status={status} />
+                                                        </div>
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     )}
                 </div>
             </div>
+        );
+    };
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-                    <h2 className="text-lg font-semibold text-slate-900">Attendance History</h2>
-                    {/* Date filter could go here */}
+    // EMPLOYEE VIEW
+    const EmployeeView = () => {
+        // Filter my records
+        // Handle user.id type mismatch (string vs int)
+        const myRecords = attendanceData
+            .filter(r => r.user_id == user.id || r.userId == user.id)
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        const presentCount = myRecords.filter(r => r.status === 'Present').length;
+        const leaveCount = myRecords.filter(r => r.status === 'Leave').length;
+
+        if (loading) return <div className="p-8 text-center">Loading history...</div>;
+
+        return (
+            <div className="space-y-8">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <h1 className="text-2xl font-bold text-slate-900">My Attendance</h1>
                 </div>
 
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-slate-500">
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <StatCard label="Days Present" value={presentCount} subtext="This Year" color="bg-green-50 text-green-700" />
+                    <StatCard label="Leaves Taken" value={leaveCount} subtext="Approved" color="bg-blue-50 text-blue-700" />
+                    <StatCard label="Late Arrivals" value={myRecords.filter(r => r.status === 'Late').length} subtext="Needs Improvement" color="bg-orange-50 text-orange-700" />
+                </div>
+
+                {/* Table */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                             <tr>
-                                <th className="px-6 py-3 font-medium">Date</th>
-                                <th className="px-6 py-3 font-medium">Check In</th>
-                                <th className="px-6 py-3 font-medium">Check Out</th>
-                                <th className="px-6 py-3 font-medium">Status</th>
-                                <th className="px-6 py-3 font-medium">Working Hours</th>
+                                <th className="px-6 py-4">Date</th>
+                                <th className="px-6 py-4">Check In</th>
+                                <th className="px-6 py-4">Check Out</th>
+                                <th className="px-6 py-4">Work Hours</th>
+                                <th className="px-6 py-4">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {attendanceHistory.length > 0 ? (
-                                attendanceHistory.map((record) => (
-                                    <tr key={record.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4 font-medium text-slate-900 flex items-center gap-2">
-                                            <CalendarIcon className="w-4 h-4 text-slate-400" />
-                                            {new Date(record.date).toLocaleDateString()}
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-600">{record.checkIn}</td>
-                                        <td className="px-6 py-4 text-slate-600">{record.checkOut || '--:--'}</td>
-                                        <td className="px-6 py-4">
-                                            <span className={clsx(
-                                                "px-2.5 py-1 rounded-full text-xs font-medium",
-                                                record.status === 'Present' ? "bg-green-100 text-green-700" :
-                                                    record.status === 'Late' ? "bg-orange-100 text-orange-700" :
-                                                        "bg-red-100 text-red-700"
-                                            )}>
-                                                {record.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-500">
-                                            8h 30m {/* Placeholder calculation */}
-                                        </td>
-                                    </tr>
-                                ))
-                            ) : (
+                            {myRecords.map(record => (
+                                <tr key={record.id} className="hover:bg-slate-50">
+                                    <td className="px-6 py-4 font-medium text-slate-900">
+                                        {new Date(record.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </td>
+                                    <td className="px-6 py-4 font-mono text-slate-600">{record.check_in || record.checkIn}</td>
+                                    <td className="px-6 py-4 font-mono text-slate-600">{record.check_out || record.checkOut || '-'}</td>
+                                    <td className="px-6 py-4 font-mono text-slate-700">{record.working_hours || record.workingHours || '-'}</td>
+                                    <td className="px-6 py-4">
+                                        <StatusBadge status={record.status} />
+                                    </td>
+                                </tr>
+                            ))}
+                            {myRecords.length === 0 && (
                                 <tr>
                                     <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
-                                        No attendance records found.
+                                        No attendance history found.
                                     </td>
                                 </tr>
                             )}
@@ -163,6 +265,53 @@ export const Attendance = () => {
                     </table>
                 </div>
             </div>
-        </div>
+        );
+    };
+
+    return isAdmin ? <AdminView /> : <EmployeeView />;
+};
+
+// Helper Components
+const StatCard = ({ label, value, subtext, color }) => (
+    <div className={`p-4 rounded-xl border border-slate-100 ${color}`}>
+        <p className="text-sm font-medium opacity-80 mb-1">{label}</p>
+        <p className="text-2xl font-bold mb-1">{value}</p>
+        <p className="text-xs opacity-60">{subtext}</p>
+    </div>
+);
+
+// Full Badge
+const StatusBadge = ({ status }) => {
+    const styles = {
+        'Present': 'bg-green-100 text-green-700',
+        'Absent': 'bg-red-100 text-red-700',
+        'Half-day': 'bg-orange-100 text-orange-700',
+        'Leave': 'bg-blue-100 text-blue-700',
+        'Late': 'bg-yellow-100 text-yellow-700',
+    };
+
+    const finalStatus = status || 'Absent';
+
+    return (
+        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${styles[finalStatus] || 'bg-slate-100 text-slate-600'}`}>
+            {finalStatus}
+        </span>
+    );
+};
+
+// Mini Dot for Weekly View
+const MiniStatusBadge = ({ status }) => {
+    const styles = {
+        'Present': 'bg-green-500',
+        'Absent': 'bg-red-500',
+        'Half-day': 'bg-orange-500',
+        'Leave': 'bg-blue-500',
+    };
+
+    let colorClass = styles[status] || styles['Absent'];
+    if (status === 'Late') colorClass = 'bg-yellow-500';
+
+    return (
+        <div className={`w-2.5 h-2.5 rounded-full ${colorClass}`} title={status}></div>
     );
 };

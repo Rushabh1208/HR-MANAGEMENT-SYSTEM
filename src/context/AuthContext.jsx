@@ -8,42 +8,30 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const storedUser = localStorage.getItem(DB_KEYS.CURRENT_USER);
-        if (storedUser) {
-            setUser(JSON.parse(storedUser));
+        const stored = localStorage.getItem(DB_KEYS.CURRENT_USER);
+        if (stored) {
+            setUser(JSON.parse(stored));
         }
         setLoading(false);
     }, []);
 
-    const login = (email, password) => {
-        const user = db.authenticate(email, password);
-        if (user) {
-            setUser(user);
-            localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+    const login = async (identifier, password) => {
+        const loggedUser = await db.authenticate(identifier, password);
+        if (loggedUser) {
+            setUser(loggedUser);
+            localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(loggedUser));
             return true;
         }
         return false;
     };
 
+    const register = async (userData) => {
+        // Placeholder for consistency
+    };
+
     const logout = () => {
         setUser(null);
         localStorage.removeItem(DB_KEYS.CURRENT_USER);
-    };
-
-    const register = (userData) => {
-        // Basic validation check if email exists
-        const users = db.getUsers();
-        if (users.find(u => u.email === userData.email)) {
-            throw new Error('Email already exists');
-        }
-        const newUser = {
-            ...userData,
-            id: Date.now().toString(),
-            role: 'employee', // Default role for signup
-            joinedDate: new Date().toISOString().split('T')[0],
-        };
-        db.addUser(newUser);
-        return newUser;
     };
 
     return (
